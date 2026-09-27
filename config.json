@@ -14,7 +14,7 @@
     "imap_server": "imap.gmail.com",
     "imap_port": 993,
     "username": "bhasdgjkg5@gmail.com",
-    "app_password": "nqqu qwjx tvyn hzoh",
+    "app_password": "",
     "dry_run": false,
     "instructions": "Для реальной отправки с Gmail: включите 2FA и создайте 'Пароль приложения' (App Password) в настройках Google Account, затем вставьте его в app_password и поставьте dry_run: false"
   },

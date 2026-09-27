@@ -24,10 +24,15 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DB_PATH = os.path.join(BASE_DIR, "jobs_autopilot.db")
 
 def load_config():
+    cfg = {}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+            cfg = json.load(f)
+    if "APP_PASSWORD" in os.environ:
+        cfg.setdefault("email", {})["app_password"] = os.environ["APP_PASSWORD"]
+    if "EMAIL_USERNAME" in os.environ:
+        cfg.setdefault("email", {})["username"] = os.environ["EMAIL_USERNAME"]
+    return cfg
 
 def send_email_application(vacancy_id, target_email=None):
     cfg = load_config()
