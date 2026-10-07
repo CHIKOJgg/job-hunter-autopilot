@@ -34,6 +34,14 @@ def load_config():
 def classify_response_text(subject, body):
     full = f"{subject} {body}".lower()
 
+    # Priority 0: Bounce / Delivery Failure
+    bounce_patterns = [
+        "delivery status notification", "undelivered mail", "mailer-daemon",
+        "postmaster", "550 5.7.1", "no such user", "mailbox not found", "address not found", "адрес не найден"
+    ]
+    if any(p in full for p in bounce_patterns):
+        return "⚠️ ОШИБКА ДОСТАВКИ (Email не активен) → Подать на сайте", "BOUNCE"
+
     # Priority 1: Interview
     interview_patterns = [
         "приглаш", "собеседован", "интервью", "инвайт", "созвон", "онлайн-встреч",
@@ -78,6 +86,31 @@ def process_single_response(company_hint, sender, subject, body, received_at=Non
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
+    if category == "BOUNCE":
+        # Extract recipient email from bounce notice
+        b_emails = re.findall(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', f"{subject} {body}")
+        target_b_email = None
+        for be in b_emails:
+            be_clean = be.lower()
+            if not any(ign in be_clean for ign in ["gmail.com", "googlemail.com", "google.com"]):
+                target_b_email = be_clean
+                break
+        if target_b_email:
+            cur.execute("INSERT OR REPLACE INTO bounced_emails (email, reason, detected_at) VALUES (?, ?, ?)",
+                        (target_b_email, subject[:100], received_at))
+            cur.execute("""
+                UPDATE vacancies
+                SET status = '⚠️ ОШИБКА ДОСТАВКИ (Email не активен) → Подать на сайте',
+                    bounce_detected = 1,
+                    bounce_reason = ?,
+                    updated_at = ?
+                WHERE url LIKE ? OR requirements LIKE ?
+            """, (subject[:100], received_at, f"%{target_b_email}%", f"%{target_b_email}%"))
+            print(f"[BOUNCE] Автоматически заблокирован недоступный email: {target_b_email}")
+            conn.commit()
+            conn.close()
+            return status_label, category, None
+
     # Try to find matching vacancy by company or domain
     cur.execute("SELECT id, company, title, status FROM vacancies")
     all_vacs = cur.fetchall()
@@ -89,8 +122,6 @@ def process_single_response(company_hint, sender, subject, body, received_at=Non
             matched_id = vid
             break
 
-    snippet = (body[:250] + "...") if len(body) > 250 else body
-
     if matched_id:
         cur.execute("""
             UPDATE vacancies
@@ -99,7 +130,6 @@ def process_single_response(company_hint, sender, subject, body, received_at=Non
         """, (status_label, received_at, matched_id))
         print(f"[+] Распознан ответ для вакансии ID {matched_id} ({status_label}): {subject}")
     else:
-        # Create a new logged response entry if not matched
         print(f"[i] Получен ответ от '{sender}', тема: '{subject}' -> Категория: {status_label}")
 
     conn.commit()

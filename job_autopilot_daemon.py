@@ -90,32 +90,80 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ==================== MATCHER ====================
+# ==================== FILTERS & MATCHER ====================
+
+def is_relevant_role(title, req_text=""):
+    """Strictly filters out non-developer roles, QA, Architects, Leads, Senior 5+ YOE"""
+    t_low = title.lower()
+    
+    # 1. Reject non-developer roles
+    non_dev = [
+        'qa', 'тестировщ', 'tester', 'test engineer', 'automation engineer',
+        'devops', 'sre', 'delivery manager', 'project manager', 'product manager',
+        'scrum master', 'руководитель', 'директор', 'системный администратор', 'sysadmin'
+    ]
+    if any(w in t_low for w in non_dev):
+        return False, "Non-developer role (QA/DevOps/Management)"
+    
+    # 2. Reject Senior/Lead unless explicitly junior/trainee
+    if any(w in t_low for w in ['lead', 'тимлид', 'senior', 'сеньор', 'ведущий', 'главный', 'architect', 'архитектор']):
+        if not any(w in t_low for w in ['junior', 'джуниор', 'trainee', 'стажер', 'стажёр', 'intern']):
+            return False, "Senior/Lead/Architect role"
+            
+    # 3. Must be Java / Backend / Software Engineer
+    if not any(w in t_low for w in ['java', 'джава', 'backend', 'бэкенд', 'software engineer', 'разработчик', 'developer', 'программист']):
+        if 'java' not in req_text.lower():
+            return False, "Not Java/Backend"
+            
+    return True, "OK"
+
+def extract_hr_email(text):
+    """Regex extracts valid HR email addresses from description or URL"""
+    if not text:
+        return None
+    matches = re.findall(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', text)
+    for m in matches:
+        m_clean = m.strip('.').lower()
+        if not any(m_clean.endswith(ext) for ext in ['.png', '.jpg', '.gif', '.webp', '.svg', '.jpeg']) and len(m_clean) > 5:
+            return m_clean
+    return None
 
 def analyze_and_match(title, req_text):
     full_text = f"{title} {req_text}".lower()
     
     # Matching keywords
     matched_skills = [s for s in CANDIDATE["skills"] if s in full_text]
-    score = min(100, int((len(matched_skills) / 6.0) * 100))
-    if score < 65:
-        score = 75 # Baseline for core tech
+    
+    # Core stack bonuses
+    base_score = 65
+    if any(k in full_text for k in ["java 17", "java 21", "java 25", "java"]):
+        base_score += 10
+    if any(k in full_text for k in ["spring boot", "spring framework", "spring"]):
+        base_score += 10
+    if any(k in full_text for k in ["postgres", "postgresql", "sql", "redis"]):
+        base_score += 5
+    if any(k in full_text for k in ["docker", "git"]):
+        base_score += 5
 
     # Intern/Trainee flag
     is_internship = any(w in full_text for w in [
         "стажер", "стажёр", "стажировк", "trainee", "intern", "студент", "student",
         "graduate", "лаборатор", "курсы", "junior-", "junior 0"
     ])
+    if is_internship:
+        base_score += 5
+
+    score = min(100, max(70, base_score))
     
     has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', full_text))
     lang = "RU" if has_cyrillic else "EN"
 
     if is_internship:
         resume_name = f"Resume_{lang}.pdf"
-        mode = "Student / Intern"
+        mode = "Student / Intern (Честное)"
     else:
         resume_name = f"Resume_{lang}_1.pdf"
-        mode = "Commercial Experience"
+        mode = "Commercial 1 YOE (Опыт)"
 
     return score, matched_skills, resume_name, lang, mode
 
@@ -260,9 +308,78 @@ def fetch_remotive_global():
     log(f"Remotive API вернул: {len(found)} вакансий.")
     return found
 
+def fetch_arbeitnow_eu():
+    log("Парсинг Arbeitnow EU Remote API...")
+    found = []
+    url = "https://www.arbeitnow.com/api/job-board-api?search=java"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for j in data.get("data", [])[:40]:
+                title = j.get("title", "")
+                desc = re.sub(r'<[^>]+>', ' ', j.get("description", ""))
+                ok, _ = is_relevant_role(title, desc)
+                if ok:
+                    vid = f"arbeitnow_{j.get('slug', str(time.time()))}"
+                    found.append({
+                        "external_id": vid,
+                        "source": "Arbeitnow EU",
+                        "company": j.get("company_name", "EU Tech Company"),
+                        "title": title,
+                        "url": j.get("url", ""),
+                        "location": "Remote (Europe / Worldwide)",
+                        "salary": "B2B / Competitive",
+                        "requirements": desc[:350]
+                    })
+    except Exception as e:
+        log(f"Ошибка Arbeitnow API: {e}")
+    log(f"Arbeitnow EU вернул: {len(found)} релевантных вакансий.")
+    return found
+
+def fetch_jobicy_remote():
+    log("Парсинг Jobicy Remote API...")
+    found = []
+    url = "https://jobicy.com/api/v2/remote-jobs?count=25&tag=java"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for j in data.get("jobs", []):
+                title = j.get("jobTitle", "")
+                desc = re.sub(r'<[^>]+>', ' ', j.get("jobDescription", ""))
+                ok, _ = is_relevant_role(title, desc)
+                if ok:
+                    vid = f"jobicy_{j.get('id', str(time.time()))}"
+                    sal = f"${j.get('annualSalaryMin')}-${j.get('annualSalaryMax')}" if j.get("annualSalaryMin") else "Competitive"
+                    found.append({
+                        "external_id": vid,
+                        "source": "Jobicy Remote",
+                        "company": j.get("companyName", "Tech Company"),
+                        "title": title,
+                        "url": j.get("url", ""),
+                        "location": j.get("jobGeo", "Worldwide Remote"),
+                        "salary": sal,
+                        "requirements": desc[:350]
+                    })
+    except Exception as e:
+        log(f"Ошибка Jobicy API: {e}")
+    log(f"Jobicy Remote вернул: {len(found)} релевантных вакансий.")
+    return found
+
 def fetch_curated_and_telegram():
     log("Загрузка проверенных вакансий из Telegram и карьерных порталов...")
     curated = [
+        {
+            "external_id": "curated_innowise_00",
+            "source": "Innowise Career",
+            "company": "Innowise Group",
+            "title": "Java Traineeship / Junior Developer",
+            "url": "https://innowise.com/career/",
+            "location": "Минск / Remote",
+            "salary": "По результатам интервью",
+            "requirements": "Java Core, Spring Boot, PostgreSQL, Docker, Git. Лаборатория с высокой конверсией в штат."
+        },
         {
             "external_id": "curated_tbank_01",
             "source": "Т-Банк Карьера",
@@ -315,10 +432,10 @@ def fetch_curated_and_telegram():
         },
         {
             "external_id": "curated_aston_06",
-            "source": "Telegram: @jvmjobs",
+            "source": "ASTON Career Portal",
             "company": "ASTON Devs",
             "title": "Trainee / Junior Java Developer (Лаборатория)",
-            "url": "https://career.astondevs.ru",
+            "url": "https://career.astondevs.ru/",
             "location": "Минск / Удаленно",
             "salary": "Стипендия + старт от 1500 BYN",
             "requirements": "Java Core, Spring Framework, Hibernate, PostgreSQL, Git. 75% конверсия в оффер."
@@ -355,6 +472,8 @@ def run_cycle():
     
     all_jobs = []
     all_jobs.extend(fetch_habr_career())
+    all_jobs.extend(fetch_arbeitnow_eu())
+    all_jobs.extend(fetch_jobicy_remote())
     all_jobs.extend(fetch_remotive_global())
     all_jobs.extend(fetch_curated_and_telegram())
     
@@ -365,31 +484,49 @@ def run_cycle():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     for j in all_jobs:
-        cur.execute("SELECT id FROM vacancies WHERE external_id = ?", (j["external_id"],))
-        exists = cur.fetchone()
+        title = j.get("title", "")
+        reqs = j.get("requirements", "")
         
-        score, skills, resume_name, lang, mode = analyze_and_match(j["title"], j["requirements"])
-        
-        # Filter for relevancy
-        if score < 65 and "java" not in j["title"].lower():
+        # 1. Filter out irrelevant roles
+        ok, reason = is_relevant_role(title, reqs)
+        if not ok:
             continue
             
-        cover_letter = build_cover_letter(j["company"], j["title"], lang, skills, mode)
+        # 2. Check deduplication hash
+        clean_comp = re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', j.get("company", "").lower())
+        clean_title = re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', title.lower())
+        dedup_hash = f"{clean_comp}_{clean_title[:24]}"
         
-        if not exists:
-            new_count += 1
-            cur.execute("""
-                INSERT INTO vacancies (
-                    external_id, source, company, title, url, location, salary,
-                    requirements, match_score, recommended_resume, cover_letter,
-                    status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                j["external_id"], j["source"], j["company"], j["title"], j["url"],
-                j["location"], j["salary"], j["requirements"], score, resume_name,
-                cover_letter, "ГОТОВ К ОТПРАВКЕ", now_str, now_str
-            ))
-            log(f"  [+] Записано в базу ({score}% | {mode}): {j['company']} — {j['title']}")
+        cur.execute("SELECT id FROM vacancies WHERE external_id = ? OR dedup_hash = ?", (j["external_id"], dedup_hash))
+        if cur.fetchone():
+            continue
+            
+        # 3. Detect HR email
+        hr_email = extract_hr_email(f"{j.get('url', '')} {reqs}")
+        if hr_email and not j.get("url", "").startswith("mailto:"):
+            reqs = f"[HR Email: {hr_email}] " + reqs
+            
+        score, skills, resume_name, lang, mode = analyze_and_match(title, reqs)
+        
+        # Threshold filter
+        if score < 70 and "java" not in title.lower():
+            continue
+            
+        cover_letter = build_cover_letter(j["company"], title, lang, skills, mode)
+        new_count += 1
+        
+        cur.execute("""
+            INSERT INTO vacancies (
+                external_id, source, company, title, url, location, salary,
+                requirements, match_score, recommended_resume, cover_letter,
+                status, created_at, updated_at, dedup_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            j["external_id"], j["source"], j["company"], title, j["url"],
+            j["location"], j["salary"], reqs, score, resume_name,
+            cover_letter, "ГОТОВ К ПОДАЧЕ", now_str, now_str, dedup_hash
+        ))
+        log(f"  [+] Записано в базу ({score}% | {mode}): {j['company']} — {title}")
             
     conn.commit()
     conn.close()

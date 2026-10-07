@@ -2,8 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-         DASHBOARD & VACANCY TRACKER v2.0 — ПАНЕЛЬ УПРАВЛЕНИЯ И ТРЕКЕР
+         DASHBOARD & APPLICATION TRACKER v3.0 — СИСТЕМА УПРАВЛЕНИЯ И АНАЛИТИКИ
 =============================================================================
+- Сквозная воронка кандидатов (Найдено -> Просмотрено -> Отправлено -> Ответ -> Интервью -> Оффер)
+- A/B Тестирование 4-х версий резюме (RU vs EN, Честное студенческое vs 1 год опыта)
+- Монитор доставки писем (Bounce detection) и фильтрация недоставленных адресов
+- Управление статусами, заметками и отслеживание кликов по вакансиям
 """
 
 import os
@@ -51,11 +55,27 @@ def init_db_extra():
         ("visited", "INTEGER DEFAULT 0"),
         ("visited_at", "TEXT"),
         ("notes", "TEXT"),
-        ("last_action", "TEXT")
+        ("last_action", "TEXT"),
+        ("applied_resume_version", "TEXT"),
+        ("applied_at", "TEXT"),
+        ("bounce_detected", "INTEGER DEFAULT 0"),
+        ("bounce_reason", "TEXT"),
+        ("dedup_hash", "TEXT")
     ]
     for col_name, col_type in new_cols:
         if col_name not in cols:
             cur.execute(f"ALTER TABLE vacancies ADD COLUMN {col_name} {col_type}")
+
+    # Ensure bounced_emails table exists
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bounced_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE,
+            domain TEXT,
+            reason TEXT,
+            detected_at TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -71,7 +91,7 @@ def get_stats():
     cur.execute("SELECT COUNT(*) FROM vacancies")
     total = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ОТПРАВЛЕНО%'")
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ОТПРАВЛЕНО%' OR applied_at IS NOT NULL")
     applied = cur.fetchone()[0]
 
     cur.execute("SELECT COUNT(*) FROM vacancies WHERE status NOT LIKE '%ОТПРАВЛЕНО%' AND status NOT LIKE '%ОТКАЗ%' AND status NOT LIKE '%АРХИВ%'")
@@ -92,9 +112,12 @@ def get_stats():
     cur.execute("SELECT COUNT(*) FROM vacancies WHERE match_score >= 85")
     top_matches = cur.fetchone()[0]
 
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE bounce_detected = 1 OR status LIKE '%не активен%'")
+    bounced_count = cur.fetchone()[0]
+
     conn.close()
 
-    conversion_rate = round((interviews / applied * 100), 1) if applied > 0 else 0.0
+    conversion_rate = round(((interviews + test_tasks) / applied * 100), 1) if applied > 0 else 0.0
 
     return {
         "total": total,
@@ -105,7 +128,191 @@ def get_stats():
         "test_tasks": test_tasks,
         "rejections": rejections,
         "top_matches": top_matches,
+        "bounced_count": bounced_count,
         "conversion_rate": conversion_rate
+    }
+
+@app.get("/api/analytics")
+def get_analytics():
+    conn = get_db()
+    cur = conn.cursor()
+
+    # 1. Funnel Metrics
+    cur.execute("SELECT COUNT(*) FROM vacancies")
+    total_found = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE visited = 1")
+    visited = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ОТПРАВЛЕНО%' OR applied_at IS NOT NULL OR bounce_detected = 1 OR status LIKE '%не активен%'")
+    applied = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE bounce_detected = 1 OR status LIKE '%не активен%'")
+    bounced = cur.fetchone()[0]
+
+    delivered = max(0, applied - bounced)
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ОТВЕТ%' OR status LIKE '%ИНТЕРВЬЮ%' OR status LIKE '%ПРИГЛАШЕНИЕ%' OR status LIKE '%ТЕСТОВОЕ%' OR status LIKE '%ОТКАЗ%'")
+    replies = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ТЕСТОВОЕ%'")
+    test_tasks = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ИНТЕРВЬЮ%' OR status LIKE '%ПРИГЛАШЕНИЕ%'")
+    interviews = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE status LIKE '%ОФФЕР%'")
+    offers = cur.fetchone()[0]
+
+    funnel = [
+        {"stage": "Найдено на агрегаторах", "count": total_found, "icon": "🔍", "color": "#38BDF8"},
+        {"stage": "Просмотрено кандидатом", "count": visited, "icon": "👁️", "color": "#818CF8"},
+        {"stage": "Отправлено откликов", "count": applied, "icon": "🚀", "color": "#FBBF24"},
+        {"stage": "Доставлено в ящик HR", "count": delivered, "icon": "📬", "color": "#34D399"},
+        {"stage": "Получено ответов от HR", "count": replies, "icon": "💬", "color": "#A78BFA"},
+        {"stage": "Тестовые задания", "count": test_tasks, "icon": "📝", "color": "#FB923C"},
+        {"stage": "Собеседования / Интервью", "count": interviews, "icon": "🎯", "color": "#60A5FA"},
+        {"stage": "Офферы", "count": offers, "icon": "🏆", "color": "#4ADE80"}
+    ]
+
+    for i, step in enumerate(funnel):
+        step["pct_total"] = round((step["count"] / total_found * 100), 1) if total_found > 0 else 0
+        if i == 0:
+            step["step_cr"] = 100.0
+        else:
+            prev_cnt = funnel[i-1]["count"]
+            step["step_cr"] = round((step["count"] / prev_cnt * 100), 1) if prev_cnt > 0 else 0.0
+
+    # 2. A/B Testing comparison for 4 Resumes
+    resumes_meta = [
+        {
+            "file": "Resume_RU_1.pdf",
+            "title": "Резюме RU (1 год коммерческого опыта)",
+            "lang": "RU",
+            "experience": "1+ YOE Commercial",
+            "badge": "⭐ Рекомендуемое RU",
+            "description": "Позиционирование: опыт микросервисов, Spring Boot 3/4, PostgreSQL, оптимизация запросов, CI/CD"
+        },
+        {
+            "file": "Resume_RU.pdf",
+            "title": "Резюме RU (Честное студенческое)",
+            "lang": "RU",
+            "experience": "Student / Foundations",
+            "badge": "📄 Студенческое RU",
+            "description": "Позиционирование: студент БГУИР ФКП (2024-2028), глубокая база Java 21, Spring Modulith, академические pet-проекты"
+        },
+        {
+            "file": "Resume_EN_1.pdf",
+            "title": "Resume EN (1 YOE Commercial)",
+            "lang": "EN",
+            "experience": "1+ YOE Commercial",
+            "badge": "⭐ Рекомендуемое EN",
+            "description": "Positioning: Junior/Mid Backend Engineer, production Spring Boot microservices, high-load caching, C1 English"
+        },
+        {
+            "file": "Resume_EN.pdf",
+            "title": "Resume EN (Honest Student)",
+            "lang": "EN",
+            "experience": "Student / Foundations",
+            "badge": "📄 Студенческое EN",
+            "description": "Positioning: Computer Science student at BSUIR, strong Java 21 fundamentals, clean code, open for international remote/intern"
+        }
+    ]
+
+    ab_tests = []
+    for r in resumes_meta:
+        fname = r["file"]
+        cur.execute("SELECT COUNT(*) FROM vacancies WHERE recommended_resume = ?", (fname,))
+        rec_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM vacancies
+            WHERE (applied_resume_version = ? OR (applied_resume_version IS NULL AND recommended_resume = ?))
+              AND (status LIKE '%ОТПРАВЛЕНО%' OR applied_at IS NOT NULL)
+        """, (fname, fname))
+        app_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM vacancies
+            WHERE (applied_resume_version = ? OR (applied_resume_version IS NULL AND recommended_resume = ?))
+              AND (status LIKE '%ОТПРАВЛЕНО%' OR applied_at IS NOT NULL)
+              AND (bounce_detected IS NULL OR bounce_detected = 0)
+        """, (fname, fname))
+        deliv_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM vacancies
+            WHERE (applied_resume_version = ? OR recommended_resume = ?)
+              AND (status LIKE '%ИНТЕРВЬЮ%' OR status LIKE '%ПРИГЛАШЕНИЕ%' OR status LIKE '%ТЕСТОВОЕ%' OR status LIKE '%ОФФЕР%')
+        """, (fname, fname))
+        pos_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM vacancies
+            WHERE (applied_resume_version = ? OR recommended_resume = ?)
+              AND status LIKE '%ОТКАЗ%'
+        """, (fname, fname))
+        rej_count = cur.fetchone()[0]
+
+        cr = round((pos_count / app_count * 100), 1) if app_count > 0 else 0.0
+
+        ab_tests.append({
+            **r,
+            "recommended_count": rec_count,
+            "applied_count": app_count,
+            "delivered_count": deliv_count,
+            "positive_count": pos_count,
+            "rejections_count": rej_count,
+            "conversion_rate": cr
+        })
+
+    # 3. Sources breakdown
+    cur.execute("""
+        SELECT source,
+               COUNT(*) as total,
+               SUM(CASE WHEN status LIKE '%ОТПРАВЛЕНО%' OR applied_at IS NOT NULL THEN 1 ELSE 0 END) as applied,
+               SUM(CASE WHEN status LIKE '%ИНТЕРВЬЮ%' OR status LIKE '%ТЕСТОВОЕ%' OR status LIKE '%ПРИГЛАШЕНИЕ%' THEN 1 ELSE 0 END) as positive
+        FROM vacancies
+        GROUP BY source
+        ORDER BY total DESC
+    """)
+    sources = []
+    for row in cur.fetchall():
+        s_name = row[0] or "Прямой поиск / Live"
+        s_tot = row[1]
+        s_app = row[2] or 0
+        s_pos = row[3] or 0
+        s_cr = round((s_pos / s_app * 100), 1) if s_app > 0 else 0.0
+        sources.append({
+            "source": s_name,
+            "total": s_tot,
+            "applied": s_app,
+            "positive": s_pos,
+            "conversion_rate": s_cr
+        })
+
+    # 4. Bounced emails
+    cur.execute("SELECT email, reason, detected_at FROM bounced_emails")
+    bounced_list = [
+        {"email": row[0], "domain": row[0].split("@")[-1] if "@" in row[0] else "", "reason": row[1], "detected_at": row[2]}
+        for row in cur.fetchall()
+    ]
+
+    conn.close()
+
+    return {
+        "funnel": funnel,
+        "ab_tests": ab_tests,
+        "sources": sources,
+        "bounced_list": bounced_list,
+        "summary": {
+            "total_found": total_found,
+            "applied": applied,
+            "delivered": delivered,
+            "interviews": interviews,
+            "test_tasks": test_tasks,
+            "conversion_rate": round(((interviews + test_tasks) / applied * 100), 1) if applied > 0 else 0.0
+        }
     }
 
 @app.get("/api/vacancies")
@@ -195,8 +402,12 @@ def run_scan():
 @app.post("/api/action/open_excel")
 def open_excel():
     if os.path.exists(EXCEL_PATH):
-        os.system(f'start "" "{EXCEL_PATH}"')
-        return {"success": True, "message": "Excel таблица открыта."}
+        try:
+            if sys.platform == "win32":
+                os.system(f'start "" "{EXCEL_PATH}"')
+            return {"success": True, "message": "Excel таблица открыта."}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
     return {"success": False, "message": "Файл Excel не найден."}
 
 @app.get("/download_resume/{name}")
@@ -216,7 +427,7 @@ def index():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Job Hunter & Tracker — Мирослав Писарик</title>
+<title>Job Hunter & Conversion Analytics Hub — Мирослав Писарик</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
@@ -323,7 +534,7 @@ def index():
     .stat-val { font-size: 26px; font-weight: 800; margin: 4px 0 2px; }
     .stat-sub { font-size: 11px; color: var(--text-secondary); }
 
-    /* Main Section Controls */
+    /* Controls Panel */
     .controls-panel {
         background: var(--bg-card);
         border: 1px solid var(--border);
@@ -574,6 +785,154 @@ def index():
         animation: fadeIn 0.2s ease;
     }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ================= ANALYTICS STYLES ================= */
+    .analytics-view { display: none; flex-direction: column; gap: 24px; }
+    .analytics-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 22px 26px;
+    }
+    .analytics-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+    }
+    .analytics-card-header h2 {
+        font-size: 18px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    /* Funnel visual */
+    .funnel-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .funnel-step {
+        display: grid;
+        grid-template-columns: 220px 1fr 100px 90px;
+        align-items: center;
+        gap: 16px;
+        background: rgba(0,0,0,0.2);
+        padding: 10px 16px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.04);
+    }
+    .funnel-step-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    .funnel-bar-wrapper {
+        background: rgba(255,255,255,0.06);
+        border-radius: 8px;
+        height: 18px;
+        overflow: hidden;
+        position: relative;
+    }
+    .funnel-bar-fill {
+        height: 100%;
+        border-radius: 8px;
+        transition: width 0.6s ease;
+    }
+    .funnel-step-count {
+        font-size: 15px;
+        font-weight: 800;
+        text-align: right;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .funnel-step-cr {
+        font-size: 12px;
+        font-weight: 700;
+        text-align: right;
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: rgba(255,255,255,0.05);
+        color: var(--text-secondary);
+    }
+
+    /* A/B Grid */
+    .ab-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+    }
+    .ab-card {
+        background: rgba(0,0,0,0.25);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 14px;
+        transition: border-color 0.2s;
+    }
+    .ab-card:hover { border-color: var(--accent-blue); }
+    .ab-badge {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        display: inline-block;
+        margin-bottom: 6px;
+    }
+    .ab-badge-primary { background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); }
+    .ab-badge-neutral { background: rgba(255, 255, 255, 0.08); color: #CBD5E1; }
+    .ab-title { font-size: 15px; font-weight: 700; color: white; line-height: 1.3; }
+    .ab-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+    .ab-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        background: rgba(255,255,255,0.02);
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.05);
+    }
+    .ab-metric-item { display: flex; flex-direction: column; }
+    .ab-m-label { font-size: 11px; color: var(--text-secondary); }
+    .ab-m-val { font-size: 17px; font-weight: 800; color: white; }
+    .ab-cr-badge {
+        font-size: 14px;
+        font-weight: 800;
+        padding: 6px 12px;
+        border-radius: 8px;
+        text-align: center;
+        background: rgba(52, 211, 153, 0.15);
+        color: var(--accent-green);
+        border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+
+    /* Bounced table */
+    .bounced-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-top: 10px;
+    }
+    .bounced-table th {
+        text-align: left;
+        padding: 10px 14px;
+        background: rgba(0,0,0,0.3);
+        color: var(--text-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--border);
+    }
+    .bounced-table td {
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
 </style>
 </head>
 <body>
@@ -603,30 +962,35 @@ def index():
 
     <!-- Stats Grid -->
     <div class="stats-grid">
-        <div class="stat-card active" onclick="switchTab('to_apply')">
+        <div class="stat-card active" id="card-btn-to_apply" onclick="switchTab('to_apply')">
             <div class="stat-title">🔥 Надо откликнуться</div>
             <div class="stat-val" id="stat-to-apply" style="color: var(--accent-yellow)">-</div>
             <div class="stat-sub">Высокий Match Score</div>
         </div>
-        <div class="stat-card" onclick="switchTab('applied')">
+        <div class="stat-card" id="card-btn-applied" onclick="switchTab('applied')">
             <div class="stat-title">📬 Уже отправлено</div>
             <div class="stat-val" id="stat-applied" style="color: var(--accent-green)">-</div>
             <div class="stat-sub">Успешные отклики</div>
         </div>
-        <div class="stat-card" onclick="switchTab('visited')">
+        <div class="stat-card" id="card-btn-visited" onclick="switchTab('visited')">
             <div class="stat-title">👁️ Где я кликал</div>
             <div class="stat-val" id="stat-visited" style="color: var(--accent-purple)">-</div>
             <div class="stat-sub">Просмотренные мной</div>
         </div>
-        <div class="stat-card" onclick="switchTab('dialogs')">
+        <div class="stat-card" id="card-btn-dialogs" onclick="switchTab('dialogs')">
             <div class="stat-title">🎯 Интервью / Тесты</div>
             <div class="stat-val" id="stat-interviews" style="color: var(--accent-blue)">-</div>
-            <div class="stat-sub">Активные отклики</div>
+            <div class="stat-sub">Активные диалоги</div>
         </div>
-        <div class="stat-card" onclick="switchTab('all')">
+        <div class="stat-card" id="card-btn-analytics" onclick="switchTab('analytics')">
+            <div class="stat-title">📊 Конверсия CR%</div>
+            <div class="stat-val" id="stat-cr" style="color: var(--accent-green)">-</div>
+            <div class="stat-sub">Воронка и A/B Тест</div>
+        </div>
+        <div class="stat-card" id="card-btn-all" onclick="switchTab('all')">
             <div class="stat-title">📋 Всего в базе</div>
             <div class="stat-val" id="stat-total">-</div>
-            <div class="stat-sub">Хабр, Telegram, Резерв</div>
+            <div class="stat-sub">Хабр, Arbeitnow, Jobicy</div>
         </div>
     </div>
 
@@ -645,12 +1009,15 @@ def index():
             <button class="tab-btn" id="tab-dialogs" onclick="switchTab('dialogs')">
                 🎯 Интервью и Тестовые <span class="tab-count" id="count-dialogs">0</span>
             </button>
+            <button class="tab-btn" id="tab-analytics" onclick="switchTab('analytics')">
+                📊 Воронка и A/B Аналитика
+            </button>
             <button class="tab-btn" id="tab-all" onclick="switchTab('all')">
                 📋 Все вакансии <span class="tab-count" id="count-all">0</span>
             </button>
         </div>
 
-        <div class="filter-row">
+        <div class="filter-row" id="filter-panel-row">
             <div class="search-box">
                 <span class="search-icon">🔍</span>
                 <input type="text" class="search-input" id="search-input" placeholder="Поиск по компании, позиции, стеку..." oninput="handleSearch()">
@@ -670,9 +1037,57 @@ def index():
         </div>
     </div>
 
-    <!-- Vacancy List -->
+    <!-- Vacancy List View -->
     <div class="vacancy-list" id="vacancies-container">
         <div style="text-align: center; padding: 40px; color: var(--text-secondary);">Загрузка вакансий...</div>
+    </div>
+
+    <!-- Analytics View Hub -->
+    <div class="analytics-view" id="analytics-container">
+        <!-- 1. Funnel -->
+        <div class="analytics-card">
+            <div class="analytics-card-header">
+                <h2>📈 Сквозная Воронка Отбора Кандидата</h2>
+                <span style="font-size: 13px; color: var(--text-secondary);">Полный путь от парсинга до оффера</span>
+            </div>
+            <div class="funnel-container" id="funnel-render-box">
+                <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Загрузка воронки...</div>
+            </div>
+        </div>
+
+        <!-- 2. A/B Testing Grid -->
+        <div class="analytics-card">
+            <div class="analytics-card-header">
+                <h2>🧪 A/B Тестирование 4-х Версий Резюме</h2>
+                <span style="font-size: 13px; color: var(--text-secondary);">Сравнение откликов: Студенческое (Честное) vs 1+ год коммерческого опыта</span>
+            </div>
+            <div class="ab-grid" id="ab-render-grid">
+                <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Загрузка A/B тестов...</div>
+            </div>
+        </div>
+
+        <!-- 3. Sources & Bounced -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <!-- Sources -->
+            <div class="analytics-card">
+                <div class="analytics-card-header">
+                    <h2>🌐 Эффективность Источников</h2>
+                </div>
+                <div id="sources-render-box">
+                    <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Загрузка источников...</div>
+                </div>
+            </div>
+
+            <!-- Bounced / Delivery Watchdog -->
+            <div class="analytics-card">
+                <div class="analytics-card-header">
+                    <h2>🛡️ Контроль Доставки (Bounce Watchdog)</h2>
+                </div>
+                <div id="bounced-render-box">
+                    <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Проверка отчетов почтового демона...</div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -711,6 +1126,7 @@ def index():
             document.getElementById('stat-applied').innerText = data.applied;
             document.getElementById('stat-visited').innerText = data.visited_count;
             document.getElementById('stat-interviews').innerText = data.interviews + data.test_tasks;
+            document.getElementById('stat-cr').innerText = `${data.conversion_rate}%`;
             document.getElementById('stat-total').innerText = data.total;
 
             document.getElementById('count-to_apply').innerText = data.to_apply;
@@ -741,6 +1157,133 @@ def index():
         }
     }
 
+    async function loadAnalytics() {
+        try {
+            const res = await fetch('/api/analytics');
+            const data = await res.json();
+
+            // 1. Render Funnel
+            const funnelBox = document.getElementById('funnel-render-box');
+            funnelBox.innerHTML = data.funnel.map((step, idx) => {
+                const widthPct = Math.max(step.pct_total, 4);
+                return `
+                    <div class="funnel-step">
+                        <div class="funnel-step-name">
+                            <span>${step.icon}</span>
+                            <span>${step.stage}</span>
+                        </div>
+                        <div class="funnel-bar-wrapper">
+                            <div class="funnel-bar-fill" style="width: ${widthPct}%; background: ${step.color};"></div>
+                        </div>
+                        <div class="funnel-step-count" style="color: ${step.color};">${step.count}</div>
+                        <div class="funnel-step-cr" title="Конверсия этапа: ${step.step_cr}%">${step.step_cr}%</div>
+                    </div>
+                `;
+            }).join('');
+
+            // 2. Render A/B Testing Grid
+            const abGrid = document.getElementById('ab-render-grid');
+            abGrid.innerHTML = data.ab_tests.map(t => {
+                const badgeClass = t.badge.includes('⭐') ? 'ab-badge-primary' : 'ab-badge-neutral';
+                return `
+                    <div class="ab-card">
+                        <div>
+                            <span class="ab-badge ${badgeClass}">${t.badge}</span>
+                            <div class="ab-title">${t.title}</div>
+                            <div class="ab-desc" style="margin-top: 6px;">${t.description}</div>
+                        </div>
+
+                        <div class="ab-metrics">
+                            <div class="ab-metric-item">
+                                <span class="ab-m-label">Назначено</span>
+                                <span class="ab-m-val">${t.recommended_count}</span>
+                            </div>
+                            <div class="ab-metric-item">
+                                <span class="ab-m-label">Отправлено</span>
+                                <span class="ab-m-val" style="color: var(--accent-yellow);">${t.applied_count}</span>
+                            </div>
+                            <div class="ab-metric-item">
+                                <span class="ab-m-label">Доставлено</span>
+                                <span class="ab-m-val" style="color: var(--accent-green);">${t.delivered_count}</span>
+                            </div>
+                            <div class="ab-metric-item">
+                                <span class="ab-m-label">Интервью/Тесты</span>
+                                <span class="ab-m-val" style="color: var(--accent-blue);">${t.positive_count}</span>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                            <div class="ab-cr-badge">CR: ${t.conversion_rate}%</div>
+                            <a class="btn" href="/download_resume/${t.file}" target="_blank" download>
+                                💾 PDF
+                            </a>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // 3. Render Sources
+            const srcBox = document.getElementById('sources-render-box');
+            srcBox.innerHTML = `
+                <table class="bounced-table">
+                    <thead>
+                        <tr>
+                            <th>Источник</th>
+                            <th style="text-align: center;">Всего</th>
+                            <th style="text-align: center;">Отправлено</th>
+                            <th style="text-align: right;">Конверсия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.sources.map(s => `
+                            <tr>
+                                <td style="font-weight: 600;">${s.source}</td>
+                                <td style="text-align: center; color: var(--accent-blue);">${s.total}</td>
+                                <td style="text-align: center;">${s.applied}</td>
+                                <td style="text-align: right; color: var(--accent-green); font-weight: 700;">${s.conversion_rate}%</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            // 4. Render Bounced
+            const bounceBox = document.getElementById('bounced-render-box');
+            if (data.bounced_list.length === 0) {
+                bounceBox.innerHTML = '<div style="padding: 20px; color: var(--accent-green); font-size: 13px;">✓ Ошибок доставки не зафиксировано! Все письма успешно доходят.</div>';
+            } else {
+                bounceBox.innerHTML = `
+                    <div style="font-size: 12px; color: #FCA5A5; margin-bottom: 10px;">
+                        ⚠️ Обнаружены недоступные почтовые адреса. Автопилот исключил их из отправки:
+                    </div>
+                    <table class="bounced-table">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Причина сбоя</th>
+                                <th>Действие</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.bounced_list.map(b => `
+                                <tr>
+                                    <td><code>${b.email}</code></td>
+                                    <td style="color: #F87171; font-size: 11.5px;">${b.reason}</td>
+                                    <td>
+                                        ${b.email.includes('aston') ? '<a class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;" href="https://career.astondevs.ru/" target="_blank">Сайт Aston ↗</a>' : '<span style="color: var(--text-secondary); font-size: 11px;">Подать на сайте</span>'}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+        } catch(e) {
+            console.error('Analytics error:', e);
+        }
+    }
+
     function renderCard(v) {
         const isVisited = v.visited === 1;
         const isApplied = (v.status || '').includes('ОТПРАВЛЕНО');
@@ -753,7 +1296,7 @@ def index():
         if (isFailed) cardClass += ' is-failed';
 
         const safeUrl = v.url || '#';
-        const resFile = v.recommended_resume || 'Resume_RU_1.pdf';
+        const resFile = v.applied_resume_version || v.recommended_resume || 'Resume_RU_1.pdf';
 
         return `
         <div class="${cardClass}" id="card-${v.id}">
@@ -782,6 +1325,7 @@ def index():
                 <span>💰 ${v.salary || 'Не указана'}</span>
                 <span>🗓️ Источник: ${v.source || 'Хабр / Live'}</span>
                 <span>📄 Резюме: <strong>${resFile}</strong></span>
+                ${v.applied_at ? `<span style="color: var(--accent-green);">📅 Отправлено: ${v.applied_at}</span>` : ''}
             </div>
 
             <div class="vac-desc">
@@ -819,7 +1363,6 @@ def index():
         try {
             await fetch(`/api/vacancies/${vid}/visited`, { method: 'POST' });
             loadStats();
-            // visually mark as visited
             const card = document.getElementById(`card-${vid}`);
             if (card && !card.classList.contains('is-applied')) {
                 card.classList.add('is-visited');
@@ -839,7 +1382,8 @@ def index():
             const data = await res.json();
             showToast(`Статус обновлен: ${newStatus}`);
             loadStats();
-            loadVacancies();
+            if (currentTab === 'analytics') loadAnalytics();
+            else loadVacancies();
         } catch(e) {
             showToast(`Ошибка: ${e}`);
         }
@@ -855,7 +1399,9 @@ def index():
                 loadStats();
                 loadVacancies();
             } else {
-                showToast(`Ошибка: ${data.message}`);
+                showToast(`Предупреждение: ${data.message}`);
+                loadStats();
+                loadVacancies();
             }
         } catch(e) {
             showToast(`Ошибка отправки: ${e}`);
@@ -870,7 +1416,24 @@ def index():
         const tabBtn = document.getElementById(`tab-${tabName}`);
         if (tabBtn) tabBtn.classList.add('active');
 
-        loadVacancies();
+        const cardBtn = document.getElementById(`card-btn-${tabName}`);
+        if (cardBtn) cardBtn.classList.add('active');
+
+        const filterRow = document.getElementById('filter-panel-row');
+        const vacanciesContainer = document.getElementById('vacancies-container');
+        const analyticsContainer = document.getElementById('analytics-container');
+
+        if (tabName === 'analytics') {
+            filterRow.style.display = 'none';
+            vacanciesContainer.style.display = 'none';
+            analyticsContainer.style.display = 'flex';
+            loadAnalytics();
+        } else {
+            filterRow.style.display = 'flex';
+            vacanciesContainer.style.display = 'flex';
+            analyticsContainer.style.display = 'none';
+            loadVacancies();
+        }
     }
 
     let searchTimer = null;
@@ -924,7 +1487,7 @@ def index():
         const toast = document.getElementById('toast-box');
         document.getElementById('toast-text').innerText = text;
         toast.style.display = 'flex';
-        setTimeout(() => { toast.style.display = 'none'; }, 3000);
+        setTimeout(() => { toast.style.display = 'none'; }, 3500);
     }
 
     async function triggerScan() {
@@ -949,4 +1512,4 @@ def index():
     return html_content
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8050, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=8050, log_level="warning")
