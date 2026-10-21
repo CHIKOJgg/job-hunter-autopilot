@@ -981,10 +981,12 @@ def index():
             <p>Junior Java / Spring Boot Backend Engineer &bull; Минск &bull; C1 Advanced &bull; BSUIR (2024–2028)</p>
         </div>
         <div class="resume-buttons">
-            <a class="btn" href="/download_resume/Resume_RU.pdf" target="_blank" title="Студенческое / Честное на русском">📄 Резюме RU (Честное)</a>
-            <a class="btn" href="/download_resume/Resume_EN.pdf" target="_blank" title="Student / Honest in English">📄 Resume EN (Honest)</a>
+            <a class="btn" href="/download_resume/Resume_EN_Remote.pdf" target="_blank" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.5); color: #34D399; font-weight: 700;" title="Flagship Microservices Resume for USD / EUR B2B Remote">💵 Resume EN Remote (USD/B2B)</a>
+            <a class="btn" href="/download_resume/Resume_RU_Remote.pdf" target="_blank" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.5); color: #34D399; font-weight: 700;" title="Флагманское резюме под микросервисы и валютную удаленку">💵 Резюме RU Remote (B2B)</a>
+            <a class="btn btn-primary" href="/download_resume/Resume_EN_1.pdf" target="_blank" title="1+ YOE Commercial in English (Microservices)">⭐ Resume EN 1 (1 YOE)</a>
             <a class="btn btn-primary" href="/download_resume/Resume_RU_1.pdf" target="_blank" title="1+ год коммерческого опыта на русском">⭐ Резюме RU 1 (Опыт)</a>
-            <a class="btn btn-primary" href="/download_resume/Resume_EN_1.pdf" target="_blank" title="1+ YOE Commercial in English">⭐ Resume EN 1 (1 YOE)</a>
+            <a class="btn" href="/download_resume/Resume_EN.pdf" target="_blank" title="Student / Honest in English">📄 Resume EN (Honest)</a>
+            <a class="btn" href="/download_resume/Resume_RU.pdf" target="_blank" title="Студенческое / Честное на русском">📄 Резюме RU (Честное)</a>
         </div>
     </header>
 

@@ -258,8 +258,8 @@ def analyze_and_match(title, req_text, salary_text="", source_name=""):
         resume_name = f"Resume_{lang}.pdf"
         mode = "Student / Intern (Честное)"
     else:
-        resume_name = f"Resume_{lang}_1.pdf"
-        mode = "Commercial 1 YOE (Опыт)"
+        resume_name = f"Resume_{lang}_Remote.pdf" if is_currency else f"Resume_{lang}_1.pdf"
+        mode = "Commercial 1 YOE / Microservices (Опыт)"
 
     return score, matched_skills, resume_name, lang, mode, is_currency, currency_code, remote_type
 
@@ -267,11 +267,11 @@ def analyze_and_match(title, req_text, salary_text="", source_name=""):
 
 def build_cover_letter(company, title, lang, matched_skills, mode, is_currency=False):
     if lang == "RU":
-        skills_str = ", ".join(matched_skills[:5]) if matched_skills else "Java 21, Spring Boot 3/4, PostgreSQL, Redis, Docker"
-        if "1 YOE" in mode:
-            intro_exp = "Имею коммерческий опыт разработки отказоустойчивых серверных систем на стеке Java 21 и Spring Boot 3/4."
+        skills_str = ", ".join(matched_skills[:5]) if matched_skills else "Java 21/25, Spring Boot 3/4, PostgreSQL, Redis, RabbitMQ, Docker"
+        if "1 YOE" in mode or "Microservices" in mode:
+            intro_exp = "Имею коммерческий опыт разработки отказоустойчивых серверных систем, распределенных микросервисов и AI-интеграций на стеке Java 21/25 и Spring Boot 3/4."
         else:
-            intro_exp = "Я студент БГУИР и активно развиваюсь как Java/Spring Boot инженер, создавая проекты промышленного уровня."
+            intro_exp = "Я студент БГУИР и активно развиваюсь как Java/Spring Boot инженер, создавая микросервисные и транзакционные проекты промышленного уровня."
 
         letter = f"""Здравствуйте, команда {company}!
 
@@ -281,7 +281,7 @@ def build_cover_letter(company, title, lang, matched_skills, mode, is_currency=F
 
 Ключевые практические результаты:
 • Trading Platform: Спроектировал потокобезопасный in-memory matching engine и ордербук (price-time priority), real-time стриминг стакана через WebSocket (STOMP), кэширование в Redis и схему из 13 таблиц PostgreSQL с миграциями Flyway.
-• Klawa AI Assistant: Разработал модульный монолит (12 модулей) на Spring Boot 4 и Spring Modulith с интеграцией Claude API/MCP, защитой от сбоев Resilience4j Circuit Breaker и 100% изоляцией тестов в Testcontainers.
+• AI Clava Platform: Спроектировал событийно-ориентированную микросервисную архитектуру (contracts, core, ai-agent) на Java 25 и виртуальных потоках (Loom), с интеграцией Keycloak 26 (OAuth2/OIDC), брокера RabbitMQ, Spring AI с pgvector RAG и автономного Tool Calling через OpenFeign.
 
 Мой стек совпадает с вашими задачами: {skills_str}. Владею английским языком на уровне {CANDIDATE['english']}.
 
@@ -293,11 +293,11 @@ Email: {CANDIDATE['email']} | Телефон: {CANDIDATE['phone']}
 Telegram: {CANDIDATE['telegram']} | GitHub: https://{CANDIDATE['github']}
 """
     else:
-        skills_str = ", ".join(matched_skills[:5]) if matched_skills else "Java 21, Spring Boot 3/4, PostgreSQL, Redis, Docker, Testcontainers"
-        if "1 YOE" in mode:
-            intro_exp = "I have commercial experience designing and maintaining high-throughput backend services on Java 21, Spring Boot 3/4, and PostgreSQL."
+        skills_str = ", ".join(matched_skills[:5]) if matched_skills else "Java 21/25, Spring Boot 3/4, PostgreSQL, Redis, RabbitMQ, Docker, Testcontainers"
+        if "1 YOE" in mode or "Microservices" in mode:
+            intro_exp = "I have commercial experience designing, optimizing, and maintaining distributed microservices and high-throughput transactional backends on Java 21/25 and Spring Boot 3/4."
         else:
-            intro_exp = "I am a Computer Science student at BSUIR building production-grade distributed backend systems on Java 21 and Spring Boot."
+            intro_exp = "I am a Computer Science student at BSUIR building production-grade distributed microservices and transactional systems on Java 21/25 and Spring Boot."
 
         b2b_note = "I am fully available for full-time remote B2B / Contractor collaboration worldwide." if is_currency else "I am available for full-time remote collaboration."
 
@@ -308,8 +308,8 @@ I am writing to apply for the {title} position.
 {intro_exp} {b2b_note}
 
 Key engineering highlights:
-• High-Throughput Trading Engine: Engineered a thread-safe in-memory order matching engine with real-time WebSocket (STOMP) depth streaming, Redis caching, and a 13-table PostgreSQL schema with Flyway.
-• Modular AI Architecture: Built a 12-module modular monolith using Spring Modulith & Java 25, integrating Anthropic Claude API/MCP, Resilience4j Circuit Breakers, and comprehensive Testcontainers validation.
+• High-Throughput Trading Engine: Engineered a thread-safe in-memory order matching engine (price-time priority) with real-time WebSocket (STOMP) depth streaming, Redis caching, and a 13-table PostgreSQL schema with Flyway.
+• Distributed AI Microservices: Architected an event-driven multi-module monorepo (contracts, core, ai-agent) on Java 25 & Virtual Threads, integrating Keycloak 26 OAuth2 Resource Server, RabbitMQ domain events, Spring AI with PostgreSQL 17 + pgvector RAG, and autonomous OpenFeign Function Calling.
 
 My core stack directly covers your requirements: {skills_str}. English proficiency: {CANDIDATE['english']}.
 
