@@ -60,11 +60,33 @@ def init_db_extra():
         ("applied_at", "TEXT"),
         ("bounce_detected", "INTEGER DEFAULT 0"),
         ("bounce_reason", "TEXT"),
-        ("dedup_hash", "TEXT")
+        ("dedup_hash", "TEXT"),
+        ("is_currency", "INTEGER DEFAULT 0"),
+        ("currency", "TEXT DEFAULT 'RUB'"),
+        ("remote_type", "TEXT DEFAULT 'Remote'")
     ]
     for col_name, col_type in new_cols:
         if col_name not in cols:
             cur.execute(f"ALTER TABLE vacancies ADD COLUMN {col_name} {col_type}")
+
+    # Backfill currency flags
+    cur.execute("""
+        UPDATE vacancies 
+        SET is_currency = 1,
+            currency = CASE 
+                WHEN salary LIKE '%$%' OR salary LIKE '%USD%' THEN 'USD'
+                WHEN salary LIKE '%€%' OR salary LIKE '%EUR%' THEN 'EUR'
+                WHEN salary LIKE '%PLN%' THEN 'PLN'
+                ELSE 'USD'
+            END
+        WHERE is_currency = 0 AND (
+            salary LIKE '%$%' OR salary LIKE '%EUR%' OR salary LIKE '%USD%' OR salary LIKE '%€%' OR salary LIKE '%PLN%'
+            OR source LIKE '%RemoteOK%' OR source LIKE '%We Work Remotely%' OR source LIKE '%Jobicy%'
+            OR source LIKE '%Remotive%' OR source LIKE '%Arbeitnow%' OR source LIKE '%Google Summer of Code%'
+            OR source LIKE '%Linux Foundation%' OR source LIKE '%JetBrains%' OR source LIKE '%Picnic%'
+            OR source LIKE '%Just Join IT%' OR source LIKE '%No Fluff Jobs%' OR source LIKE '%Wellfound%'
+        )
+    """)
 
     # Ensure bounced_emails table exists
     cur.execute("""
@@ -115,6 +137,9 @@ def get_stats():
     cur.execute("SELECT COUNT(*) FROM vacancies WHERE bounce_detected = 1 OR status LIKE '%не активен%'")
     bounced_count = cur.fetchone()[0]
 
+    cur.execute("SELECT COUNT(*) FROM vacancies WHERE is_currency = 1 OR salary LIKE '%$%' OR salary LIKE '%EUR%' OR salary LIKE '%USD%' OR salary LIKE '%€%' OR salary LIKE '%PLN%'")
+    currency_count = cur.fetchone()[0]
+
     conn.close()
 
     conversion_rate = round(((interviews + test_tasks) / applied * 100), 1) if applied > 0 else 0.0
@@ -129,6 +154,7 @@ def get_stats():
         "rejections": rejections,
         "top_matches": top_matches,
         "bounced_count": bounced_count,
+        "currency_count": currency_count,
         "conversion_rate": conversion_rate
     }
 
@@ -325,6 +351,8 @@ def get_vacancies(tab: str = "to_apply", search: str = "", stack_filter: str = "
 
     if tab == "to_apply":
         query += " AND status NOT LIKE '%ОТПРАВЛЕНО%' AND status NOT LIKE '%ОТКАЗ%' AND status NOT LIKE '%АРХИВ%'"
+    elif tab == "currency":
+        query += " AND (is_currency = 1 OR salary LIKE '%$%' OR salary LIKE '%EUR%' OR salary LIKE '%USD%' OR salary LIKE '%€%' OR salary LIKE '%PLN%' OR source LIKE '%RemoteOK%' OR source LIKE '%We Work Remotely%' OR source LIKE '%Jobicy%' OR source LIKE '%Remotive%' OR source LIKE '%Arbeitnow%')"
     elif tab == "applied":
         query += " AND status LIKE '%ОТПРАВЛЕНО%'"
     elif tab == "visited":
@@ -962,6 +990,11 @@ def index():
 
     <!-- Stats Grid -->
     <div class="stats-grid">
+        <div class="stat-card" id="card-btn-currency" onclick="switchTab('currency')" style="border-left: 4px solid var(--accent-green); background: linear-gradient(135deg, rgba(52, 211, 153, 0.1) 0%, rgba(19, 27, 46, 0.8) 100%);">
+            <div class="stat-title">💵 Валютная удаленка</div>
+            <div class="stat-val" id="stat-currency" style="color: var(--accent-green)">-</div>
+            <div class="stat-sub">USD / EUR / B2B ($2.5k - $8k)</div>
+        </div>
         <div class="stat-card active" id="card-btn-to_apply" onclick="switchTab('to_apply')">
             <div class="stat-title">🔥 Надо откликнуться</div>
             <div class="stat-val" id="stat-to-apply" style="color: var(--accent-yellow)">-</div>
@@ -982,21 +1015,19 @@ def index():
             <div class="stat-val" id="stat-interviews" style="color: var(--accent-blue)">-</div>
             <div class="stat-sub">Активные диалоги</div>
         </div>
-        <div class="stat-card" id="card-btn-analytics" onclick="switchTab('analytics')">
-            <div class="stat-title">📊 Конверсия CR%</div>
-            <div class="stat-val" id="stat-cr" style="color: var(--accent-green)">-</div>
-            <div class="stat-sub">Воронка и A/B Тест</div>
-        </div>
         <div class="stat-card" id="card-btn-all" onclick="switchTab('all')">
             <div class="stat-title">📋 Всего в базе</div>
             <div class="stat-val" id="stat-total">-</div>
-            <div class="stat-sub">Хабр, Arbeitnow, Jobicy</div>
+            <div class="stat-sub">Все источники</div>
         </div>
     </div>
 
     <!-- Controls Panel -->
     <div class="controls-panel">
         <div class="tabs-row">
+            <button class="tab-btn" id="tab-currency" onclick="switchTab('currency')" style="border-color: rgba(52, 211, 153, 0.5); color: #34D399; font-weight: 700;">
+                💵 Валютная удаленка ($/€) <span class="tab-count" id="count-currency" style="background: rgba(52, 211, 153, 0.2); color: #34D399;">0</span>
+            </button>
             <button class="tab-btn active" id="tab-to_apply" onclick="switchTab('to_apply')">
                 🔥 Нужно откликнуться <span class="tab-count" id="count-to_apply">0</span>
             </button>
@@ -1024,10 +1055,11 @@ def index():
             </div>
             <div class="quick-chips">
                 <span style="font-size: 11px; color: var(--text-secondary); margin-right: 4px;">Фильтры:</span>
+                <div class="chip" onclick="toggleChip(this, 'USD')">💵 USD / EUR</div>
+                <div class="chip" onclick="toggleChip(this, 'Worldwide')">🌍 Worldwide</div>
+                <div class="chip" onclick="toggleChip(this, 'B2B')">📄 B2B Контракт</div>
                 <div class="chip" onclick="toggleChip(this, 'Java 21')">Java 21</div>
                 <div class="chip" onclick="toggleChip(this, 'Spring Boot')">Spring Boot</div>
-                <div class="chip" onclick="toggleChip(this, 'Remote')">Remote</div>
-                <div class="chip" onclick="toggleChip(this, 'Минск')">Минск</div>
                 <div class="chip" onclick="toggleChip(this, 'Docker')">Docker</div>
             </div>
             <div style="display: flex; gap: 8px;">
@@ -1123,12 +1155,14 @@ def index():
             const res = await fetch('/api/stats');
             const data = await res.json();
             document.getElementById('stat-to-apply').innerText = data.to_apply;
+            if (document.getElementById('stat-currency')) document.getElementById('stat-currency').innerText = data.currency_count || 0;
             document.getElementById('stat-applied').innerText = data.applied;
             document.getElementById('stat-visited').innerText = data.visited_count;
             document.getElementById('stat-interviews').innerText = data.interviews + data.test_tasks;
-            document.getElementById('stat-cr').innerText = `${data.conversion_rate}%`;
+            if (document.getElementById('stat-cr')) document.getElementById('stat-cr').innerText = `${data.conversion_rate}%`;
             document.getElementById('stat-total').innerText = data.total;
 
+            if (document.getElementById('count-currency')) document.getElementById('count-currency').innerText = data.currency_count || 0;
             document.getElementById('count-to_apply').innerText = data.to_apply;
             document.getElementById('count-applied').innerText = data.applied;
             document.getElementById('count-visited').innerText = data.visited_count;
@@ -1289,20 +1323,23 @@ def index():
         const isApplied = (v.status || '').includes('ОТПРАВЛЕНО');
         const isFailed = (v.status || '').includes('не активен');
         const matchClass = v.match_score >= 85 ? 'match-high' : 'match-med';
+        const isCurrency = v.is_currency === 1 || (v.salary && (v.salary.includes('$') || v.salary.includes('EUR') || v.salary.includes('USD') || v.salary.includes('€') || v.salary.includes('PLN'))) || (v.source && (v.source.includes('RemoteOK') || v.source.includes('Remotive') || v.source.includes('Jobicy') || v.source.includes('We Work Remotely') || v.source.includes('No Fluff Jobs') || v.source.includes('Just Join IT')));
 
         let cardClass = 'vac-card';
         if (isApplied) cardClass += ' is-applied';
         else if (isVisited) cardClass += ' is-visited';
         if (isFailed) cardClass += ' is-failed';
+        if (isCurrency) cardClass += ' is-currency';
 
         const safeUrl = v.url || '#';
-        const resFile = v.applied_resume_version || v.recommended_resume || 'Resume_RU_1.pdf';
+        const resFile = v.applied_resume_version || v.recommended_resume || (isCurrency ? 'Resume_EN_1.pdf' : 'Resume_RU_1.pdf');
 
         return `
-        <div class="${cardClass}" id="card-${v.id}">
+        <div class="${cardClass}" id="card-${v.id}" style="${isCurrency ? 'border-left: 4px solid var(--accent-green);' : ''}">
             <div class="vac-header">
                 <div class="vac-title-group">
                     <span class="match-badge ${matchClass}">${v.match_score}% MATCH</span>
+                    ${isCurrency ? `<span class="match-badge" style="background: rgba(52, 211, 153, 0.2); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.4);">💵 ВАЛЮТА (${v.currency || 'USD'})</span>` : ''}
                     <h3>${v.title}</h3>
                     <span class="company-name">@ ${v.company}</span>
                     ${isVisited ? `<span class="visited-badge">👁️ Посещено (${v.visited_at ? v.visited_at.split(' ')[0] : 'ранее'})</span>` : ''}
@@ -1322,8 +1359,8 @@ def index():
 
             <div class="vac-meta">
                 <span>📍 ${v.location || 'Удаленно / Remote'}</span>
-                <span>💰 ${v.salary || 'Не указана'}</span>
-                <span>🗓️ Источник: ${v.source || 'Хабр / Live'}</span>
+                <span><strong style="color: ${isCurrency ? 'var(--accent-green)' : 'inherit'};">💰 ${v.salary || 'Не указана'}</strong></span>
+                <span>🗓️ Источник: <strong>${v.source || 'Live'}</strong></span>
                 <span>📄 Резюме: <strong>${resFile}</strong></span>
                 ${v.applied_at ? `<span style="color: var(--accent-green);">📅 Отправлено: ${v.applied_at}</span>` : ''}
             </div>
