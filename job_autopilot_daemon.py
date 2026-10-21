@@ -281,7 +281,7 @@ def build_cover_letter(company, title, lang, matched_skills, mode, is_currency=F
 
 Ключевые практические результаты:
 • Trading Platform: Спроектировал потокобезопасный in-memory matching engine и ордербук (price-time priority), real-time стриминг стакана через WebSocket (STOMP), кэширование в Redis и схему из 13 таблиц PostgreSQL с миграциями Flyway.
-• AI Clava Platform: Спроектировал событийно-ориентированную микросервисную архитектуру (contracts, core, ai-agent) на Java 25 и виртуальных потоках (Loom), с интеграцией Keycloak 26 (OAuth2/OIDC), брокера RabbitMQ, Spring AI с pgvector RAG и автономного Tool Calling через OpenFeign.
+• AI Assistant Klawa: Спроектировал событийно-ориентированную микросервисную архитектуру (contracts, core, ai-agent) на Java 25 и виртуальных потоках (Loom), с интеграцией Keycloak 26 (OAuth2/OIDC), брокера RabbitMQ, Spring AI с pgvector RAG и автономного Tool Calling через OpenFeign.
 
 Мой стек совпадает с вашими задачами: {skills_str}. Владею английским языком на уровне {CANDIDATE['english']}.
 
@@ -309,7 +309,7 @@ I am writing to apply for the {title} position.
 
 Key engineering highlights:
 • High-Throughput Trading Engine: Engineered a thread-safe in-memory order matching engine (price-time priority) with real-time WebSocket (STOMP) depth streaming, Redis caching, and a 13-table PostgreSQL schema with Flyway.
-• Distributed AI Microservices: Architected an event-driven multi-module monorepo (contracts, core, ai-agent) on Java 25 & Virtual Threads, integrating Keycloak 26 OAuth2 Resource Server, RabbitMQ domain events, Spring AI with PostgreSQL 17 + pgvector RAG, and autonomous OpenFeign Function Calling.
+• AI Assistant Klawa (Distributed Microservices): Architected an event-driven multi-module monorepo (contracts, core, ai-agent) on Java 25 & Virtual Threads, integrating Keycloak 26 OAuth2 Resource Server, RabbitMQ domain events, Spring AI with PostgreSQL 17 + pgvector RAG, and autonomous OpenFeign Function Calling.
 
 My core stack directly covers your requirements: {skills_str}. English proficiency: {CANDIDATE['english']}.
 
