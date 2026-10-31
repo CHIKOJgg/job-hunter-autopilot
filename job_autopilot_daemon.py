@@ -773,6 +773,107 @@ def fetch_curated_and_telegram():
             "location": "100% Remote Anywhere",
             "salary": "$30,000 - $60,000 USD / год ($2,500 - $5,000 USD / месяц)",
             "requirements": "Java, OOP, Algorithms, Spring Boot, Docker, High focus on quality."
+        },
+        # ── iGaming / Casino / Betting (Cyprus, Malta, Remote NDA) ──
+        {
+            "external_id": "igaming_softswiss_01",
+            "source": "SOFTSWISS Careers (EUR)",
+            "company": "SOFTSWISS",
+            "title": "Java Backend Developer (iGaming Platform)",
+            "url": "https://www.softswiss.com/career/",
+            "location": "Remote EU / Poland / Georgia / Malta",
+            "salary": "€3,000 - €5,500 EUR / месяц (B2B)",
+            "requirements": "Java 17/21, Spring Boot, Kafka, PostgreSQL, Redis, Docker, Microservices. iGaming platform provider (casino aggregation, sportsbook). NDA."
+        },
+        {
+            "external_id": "igaming_parimatch_02",
+            "source": "Parimatch Tech Careers (USD)",
+            "company": "Parimatch Tech (PM Group)",
+            "title": "Java Software Engineer (Sportsbook / Casino Platform)",
+            "url": "https://pm.group/careers",
+            "location": "Limassol, Cyprus / Hybrid / Remote",
+            "salary": "€3,500 - €6,000 EUR / месяц + Relocation",
+            "requirements": "Java 17/21, Spring Boot, Kafka, PostgreSQL, Redis, Kubernetes, Highload. Sportsbook odds engines, wallet systems, real-time betting. NDA. Релокация на Кипр."
+        },
+        {
+            "external_id": "igaming_betsson_03",
+            "source": "Betsson Group Careers (EUR)",
+            "company": "Betsson Group",
+            "title": "Backend Developer (Java / Scala) — iGaming",
+            "url": "https://www.betssongroup.com/careers/",
+            "location": "Malta / Stockholm / Remote EU",
+            "salary": "€40,000 - €70,000 EUR / год (€3,300 - €5,800 / месяц)",
+            "requirements": "Java/Scala, Spring Boot, Microservices, Kafka, PostgreSQL, AWS. iGaming B2C operator. NDA."
+        },
+        {
+            "external_id": "igaming_evolution_04",
+            "source": "Evolution Careers (EUR)",
+            "company": "Evolution Gaming",
+            "title": "Java Developer — Live Casino Platform",
+            "url": "https://www.evolution.com/careers",
+            "location": "Riga / Tallinn / Malta / Remote EU",
+            "salary": "€3,500 - €6,500 EUR / месяц",
+            "requirements": "Java 17+, Spring Boot, Microservices, Low-Latency Systems, WebSocket, Redis, PostgreSQL. Live dealer platform engineering. NDA."
+        },
+        {
+            "external_id": "igaming_gr8tech_05",
+            "source": "GR8 Tech Careers (USD)",
+            "company": "GR8 Tech (ex-Parimatch Tech)",
+            "title": "Middle/Senior Java Developer (Sportsbook)",
+            "url": "https://gr8.tech/careers/",
+            "location": "Remote / Cyprus / Ukraine",
+            "salary": "$3,500 - $7,000 USD / месяц (B2B)",
+            "requirements": "Java 17/21, Spring Boot, Kafka, Redis, PostgreSQL, Docker/K8s. Sportsbook, betting platform. NDA."
+        },
+        {
+            "external_id": "igaming_pragmatic_06",
+            "source": "Pragmatic Play Careers (EUR)",
+            "company": "Pragmatic Play",
+            "title": "Java Backend Developer — iGaming",
+            "url": "https://www.pragmaticplay.com/en/careers/",
+            "location": "Malta / Gibraltar / Remote",
+            "salary": "€3,000 - €5,000 EUR / месяц",
+            "requirements": "Java, Spring Boot, Microservices, RabbitMQ, PostgreSQL, Redis. Game provider (slots, live casino). NDA."
+        },
+        {
+            "external_id": "igaming_soft2bet_07",
+            "source": "Soft2Bet Careers (EUR)",
+            "company": "Soft2Bet",
+            "title": "Java Backend Engineer — Casino Platform",
+            "url": "https://soft2bet.com/careers/",
+            "location": "Cyprus (Limassol) / Remote",
+            "salary": "€3,000 - €5,500 EUR / месяц + Relocation",
+            "requirements": "Java 17+, Spring Boot, PostgreSQL, Kafka, Docker, Redis. Casino platform operator. NDA. Relocation to Limassol."
+        },
+        {
+            "external_id": "igaming_betconstruct_08",
+            "source": "BetConstruct Careers (USD)",
+            "company": "BetConstruct",
+            "title": "Java Backend Developer — Betting Platform",
+            "url": "https://www.betconstruct.com/careers",
+            "location": "Remote / Cyprus / Armenia",
+            "salary": "$2,500 - $5,000 USD / месяц",
+            "requirements": "Java 17, Spring Boot, Microservices, Kafka, PostgreSQL, Redis, Docker. B2B betting platform provider. NDA."
+        },
+        {
+            "external_id": "igaming_igameers_board_09",
+            "source": "iGamers Job Board (EUR/USD)",
+            "company": "iGaming Companies (Cyprus/Malta)",
+            "title": "Java Developer — iGaming (Multiple Operators)",
+            "url": "https://igameers.com/jobs",
+            "location": "Cyprus / Malta / Remote",
+            "salary": "€30,000 - €70,000 EUR / год",
+            "requirements": "Java, Spring Boot, Kafka, PostgreSQL, Redis, Docker. iGaming aggregator job board — casino operators, sportsbook, game studios. NDA."
+        },
+        {
+            "external_id": "igaming_djinni_gambling_10",
+            "source": "Djinni.co (USD/EUR)",
+            "company": "Djinni iGaming Projects (NDA)",
+            "title": "Java/Kotlin Backend Developer — Gambling Project",
+            "url": "https://djinni.co/jobs/?primary_keyword=Java&exp_level=1y&exp_level=2y&keywords=gambling+casino+igaming",
+            "location": "Remote Worldwide / B2B",
+            "salary": "$2,500 - $5,000 USD / месяц (B2B Contractor)",
+            "requirements": "Java/Kotlin, Spring Boot, PostgreSQL, Kafka, Redis, Docker. Anonymous NDA gambling projects. B2B/ИП оплата."
         }
     ]
     log(f"Загружено проверенных позиций: {len(curated)}")
